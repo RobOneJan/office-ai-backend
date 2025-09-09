@@ -1,9 +1,26 @@
 steps:
+  # 1. Build Docker image
   - name: 'gcr.io/cloud-builders/docker'
     args: ['build', '-t', 'gcr.io/$PROJECT_ID/officeai-backend:latest', '.']
 
+  # 2. Push image to GCR
   - name: 'gcr.io/cloud-builders/docker'
     args: ['push', 'gcr.io/$PROJECT_ID/officeai-backend:latest']
 
+  # 3. Deploy to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - officeai-backend
+      - --image=gcr.io/$PROJECT_ID/officeai-backend:latest
+      - --region=europe-west3
+      - --platform=managed
+      - --allow-unauthenticated
+      - --set-secrets=GOOGLE_APPLICATION_CREDENTIALS=officeai-sa-key:latest
+      - --set-secrets=PAT_TOKEN=github-pat:latest
+      - --timeout=300s
+
 images:
-  - 'gcr.io/$PROJECT_ID/officeai-backend:latest'
+  - gcr.io/$PROJECT_ID/officeai-backend:latest

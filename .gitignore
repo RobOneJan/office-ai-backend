@@ -12,6 +12,7 @@ venv/
 
 # GCP Service Account Key
 key.json
+officeai-sa.json
 
 # Mac / OS
 .DS_Store
