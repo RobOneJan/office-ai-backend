@@ -1,56 +1,104 @@
 import os
-from google.oauth2 import service_account
+import json
 from google.cloud import secretmanager
+from google.oauth2 import service_account
 import vertexai
 from vertexai.generative_models import GenerativeModel
 
+# Minimal in-memory ChatSessions für jede conversation_id
+CHATS = {}
+VERTEX_MODEL = None
 
-def _access_secret(secret_path: str) -> str:
-    """Load secret either from env (Cloud Run) or directly from Secret Manager (local)."""
-    # Case 1: Cloud Run setzt env-Variable direkt (z.B. --set-secrets)
-    if os.path.exists(secret_path):
-        # Falls es ein gemountetes File ist (Cloud Run secret volumes)
-        with open(secret_path, "r") as f:
-            return f.read()
-    if secret_path in os.environ:
-        return os.environ[secret_path]
+# Preise pro Token (gemini-2.5-flash, Stand 2025)
+PRICES = {
+    "gemini-2.5-flash": {"input": 0.035 / 1000, "output": 0.07 / 1000}
+}
 
-    # Case 2: Lokal via Secret Manager API
+
+def _get_secret(secret_path: str) -> str:
+    """
+    Lädt Secret aus GCP Secret Manager.
+    secret_path = "projects/.../secrets/.../versions/latest"
+    """
     client = secretmanager.SecretManagerServiceClient()
     response = client.access_secret_version(name=secret_path)
-    return response.payload.data.decode("UTF-8")
+    return response.payload.data.decode("utf-8")
 
 
-# --- Initialisierung VertexAI ---
 def _init_vertexai():
-    json_key = _access_secret(
-        "projects/1094405818622/secrets/officeai-sa-key/versions/1"
-    )
+    global VERTEX_MODEL
+    if VERTEX_MODEL:
+        return VERTEX_MODEL
 
-    # Service Account Key temporär schreiben (braucht Dateipfad für google-auth)
-    key_path = "/tmp/sa.json"
-    with open(key_path, "w") as f:
-        f.write(json_key)
-
-    creds = service_account.Credentials.from_service_account_file(key_path)
+    creds = None
+    # Environment Variable kann JSON oder Pfad sein
+    json_env = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+    if json_env:
+        if os.path.exists(json_env):
+            creds = service_account.Credentials.from_service_account_file(json_env)
+        else:
+            creds = service_account.Credentials.from_service_account_info(json.loads(json_env))
+    elif os.path.exists("officeai-sa.json"):
+        creds = service_account.Credentials.from_service_account_file("officeai-sa.json")
+    else:
+        # Optional: Secret Manager direkt nutzen
+        if os.environ.get("GCP_SECRET_JSON"):
+            key_json = _get_secret(os.environ["GCP_SECRET_JSON"])
+            creds = service_account.Credentials.from_service_account_info(json.loads(key_json))
+        else:
+            raise ValueError("Keine Credentials gefunden. Lege officeai-sa.json ins Repo oder setze GOOGLE_APPLICATION_CREDENTIALS.")
 
     vertexai.init(
         project=os.environ.get("GCP_PROJECT", "dev-truth-471209-h0"),
-        location="us-central1",  # anpassen falls nötig
-        credentials=creds,
+        location="europe-west4",
+        credentials=creds
     )
 
-
-_init_vertexai()
-
-
-def call_vertex(message: str) -> str:
-    model = GenerativeModel("gemini-2.5-flash")
-    response = model.generate_content(message)
-    return response.text
+    VERTEX_MODEL = GenerativeModel("gemini-2.5-flash")
+    return VERTEX_MODEL
 
 
-def get_pat_token() -> str:
-    return _access_secret(
-        "projects/1094405818622/secrets/github_rmeier_pat_token/versions/1"
-    )
+def call_vertexai(conversation_id: str, message: str):
+    """
+    Führt ChatSession aus und liefert bot_message, Tokenverbrauch und Kosten.
+    """
+    model = _init_vertexai()
+
+    # Session für conversation_id anlegen
+    if conversation_id not in CHATS:
+        CHATS[conversation_id] = {
+            "chat": model.start_chat(),
+            "messages": [],
+            "usage": {"input_tokens": 0, "output_tokens": 0, "cost": 0.0}
+        }
+    chat_data = CHATS[conversation_id]
+    chat_data["messages"].append(("user", message))
+
+    full_response = ""
+    final_response = None
+    for chunk in chat_data["chat"].send_message(message, stream=True):
+        if chunk.text:
+            full_response += chunk.text
+        final_response = chunk
+
+    chat_data["messages"].append(("assistant", full_response))
+
+    # Token usage auswerten
+    if final_response and final_response.usage_metadata:
+        usage = final_response.usage_metadata
+        input_tokens = usage.prompt_token_count
+        output_tokens = usage.candidates_token_count
+        cost = (input_tokens * PRICES["gemini-2.5-flash"]["input"] +
+                output_tokens * PRICES["gemini-2.5-flash"]["output"])
+        chat_data["usage"]["input_tokens"] += input_tokens
+        chat_data["usage"]["output_tokens"] += output_tokens
+        chat_data["usage"]["cost"] += cost
+    else:
+        input_tokens = output_tokens = cost = 0
+
+    return {
+        "bot_message": full_response,
+        "input_tokens": chat_data["usage"]["input_tokens"],
+        "output_tokens": chat_data["usage"]["output_tokens"],
+        "cost_usd": round(chat_data["usage"]["cost"], 6)
+    }

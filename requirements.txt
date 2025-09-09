@@ -1,6 +1,6 @@
 fastapi
 uvicorn[standard]
-google-cloud-aiplatform
 google-cloud-secret-manager
 google-auth
+vertexai
 pydantic
