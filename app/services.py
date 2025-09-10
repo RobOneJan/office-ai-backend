@@ -14,7 +14,6 @@ PRICES = {
     "gemini-1.5-flash": {"input": 0.00001875, "output": 0.000075}  # USD pro Token
 }
 
-
 def _get_secret(secret_path: str) -> str:
     """
     Lädt Secret aus GCP Secret Manager
@@ -23,7 +22,6 @@ def _get_secret(secret_path: str) -> str:
     client = secretmanager.SecretManagerServiceClient()
     response = client.access_secret_version(name=secret_path)
     return response.payload.data.decode("utf-8")
-
 
 def _init_vertexai():
     """
@@ -34,7 +32,6 @@ def _init_vertexai():
         return VERTEX_MODEL
 
     creds = None
-    # Environment Variable kann JSON oder Pfad sein
     json_env = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
     if json_env:
         if os.path.exists(json_env):
@@ -43,15 +40,13 @@ def _init_vertexai():
             creds = service_account.Credentials.from_service_account_info(json.loads(json_env))
     elif os.path.exists("officeai-sa.json"):
         creds = service_account.Credentials.from_service_account_file("officeai-sa.json")
+    elif os.environ.get("GCP_SECRET_JSON"):
+        key_json = _get_secret(os.environ["GCP_SECRET_JSON"])
+        creds = service_account.Credentials.from_service_account_info(json.loads(key_json))
     else:
-        # Optional: Secret Manager direkt nutzen
-        if os.environ.get("GCP_SECRET_JSON"):
-            key_json = _get_secret(os.environ["GCP_SECRET_JSON"])
-            creds = service_account.Credentials.from_service_account_info(json.loads(key_json))
-        else:
-            raise ValueError(
-                "Keine Credentials gefunden. Lege officeai-sa.json ins Repo oder setze GOOGLE_APPLICATION_CREDENTIALS."
-            )
+        raise ValueError(
+            "Keine Credentials gefunden. Lege officeai-sa.json ins Repo oder setze GOOGLE_APPLICATION_CREDENTIALS."
+        )
 
     vertexai.init(
         project=os.environ.get("GCP_PROJECT", "dev-truth-471209-h0"),
@@ -59,10 +54,8 @@ def _init_vertexai():
         credentials=creds
     )
 
-    # Modell auf Gemini-1.5-Flash wechseln
     VERTEX_MODEL = GenerativeModel("gemini-1.5-flash")
     return VERTEX_MODEL
-
 
 def call_vertexai(conversation_id: str, message: str):
     """
@@ -80,6 +73,7 @@ def call_vertexai(conversation_id: str, message: str):
             "messages": [],
             "usage": {"input_tokens": 0, "output_tokens": 0, "cost": 0.0}
         }
+
     chat_data = CHATS[conversation_id]
     chat_data["messages"].append(("user", message))
 
@@ -94,10 +88,10 @@ def call_vertexai(conversation_id: str, message: str):
     chat_data["messages"].append(("assistant", full_response))
 
     # Token usage und Kosten auswerten
-    if final_response and final_response.usage_metadata:
+    if final_response and getattr(final_response, "usage_metadata", None):
         usage = final_response.usage_metadata
-        input_tokens = usage.prompt_token_count
-        output_tokens = usage.candidates_token_count
+        input_tokens = getattr(usage, "prompt_token_count", 0)
+        output_tokens = getattr(usage, "candidates_token_count", 0)
         cost = (
             input_tokens * PRICES["gemini-1.5-flash"]["input"] +
             output_tokens * PRICES["gemini-1.5-flash"]["output"]
