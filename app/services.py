@@ -9,15 +9,15 @@ from vertexai.generative_models import GenerativeModel
 CHATS = {}
 VERTEX_MODEL = None
 
-# Preise pro Token (gemini-2.5-flash, Stand 2025)
+# Preise pro Token (Gemini-1.5-Flash, Stand 2025)
 PRICES = {
-    "gemini-2.5-flash": {"input": 0.035 / 1000, "output": 0.07 / 1000}
+    "gemini-1.5-flash": {"input": 0.00001875, "output": 0.000075}  # USD pro Token
 }
 
 
 def _get_secret(secret_path: str) -> str:
     """
-    Lädt Secret aus GCP Secret Manager.
+    Lädt Secret aus GCP Secret Manager
     secret_path = "projects/.../secrets/.../versions/latest"
     """
     client = secretmanager.SecretManagerServiceClient()
@@ -26,6 +26,9 @@ def _get_secret(secret_path: str) -> str:
 
 
 def _init_vertexai():
+    """
+    Initialisiert Vertex AI und lädt das Modell
+    """
     global VERTEX_MODEL
     if VERTEX_MODEL:
         return VERTEX_MODEL
@@ -46,7 +49,9 @@ def _init_vertexai():
             key_json = _get_secret(os.environ["GCP_SECRET_JSON"])
             creds = service_account.Credentials.from_service_account_info(json.loads(key_json))
         else:
-            raise ValueError("Keine Credentials gefunden. Lege officeai-sa.json ins Repo oder setze GOOGLE_APPLICATION_CREDENTIALS.")
+            raise ValueError(
+                "Keine Credentials gefunden. Lege officeai-sa.json ins Repo oder setze GOOGLE_APPLICATION_CREDENTIALS."
+            )
 
     vertexai.init(
         project=os.environ.get("GCP_PROJECT", "dev-truth-471209-h0"),
@@ -54,13 +59,17 @@ def _init_vertexai():
         credentials=creds
     )
 
-    VERTEX_MODEL = GenerativeModel("gemini-2.5-flash")
+    # Modell auf Gemini-1.5-Flash wechseln
+    VERTEX_MODEL = GenerativeModel("gemini-1.5-flash")
     return VERTEX_MODEL
 
 
 def call_vertexai(conversation_id: str, message: str):
     """
-    Führt ChatSession aus und liefert bot_message, Tokenverbrauch und Kosten.
+    Führt ChatSession aus und liefert:
+    - bot_message
+    - Tokenverbrauch
+    - Kosten
     """
     model = _init_vertexai()
 
@@ -74,6 +83,7 @@ def call_vertexai(conversation_id: str, message: str):
     chat_data = CHATS[conversation_id]
     chat_data["messages"].append(("user", message))
 
+    # Streaming der Antwort
     full_response = ""
     final_response = None
     for chunk in chat_data["chat"].send_message(message, stream=True):
@@ -83,13 +93,15 @@ def call_vertexai(conversation_id: str, message: str):
 
     chat_data["messages"].append(("assistant", full_response))
 
-    # Token usage auswerten
+    # Token usage und Kosten auswerten
     if final_response and final_response.usage_metadata:
         usage = final_response.usage_metadata
         input_tokens = usage.prompt_token_count
         output_tokens = usage.candidates_token_count
-        cost = (input_tokens * PRICES["gemini-2.5-flash"]["input"] +
-                output_tokens * PRICES["gemini-2.5-flash"]["output"])
+        cost = (
+            input_tokens * PRICES["gemini-1.5-flash"]["input"] +
+            output_tokens * PRICES["gemini-1.5-flash"]["output"]
+        )
         chat_data["usage"]["input_tokens"] += input_tokens
         chat_data["usage"]["output_tokens"] += output_tokens
         chat_data["usage"]["cost"] += cost
