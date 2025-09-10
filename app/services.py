@@ -11,7 +11,7 @@ VERTEX_MODEL = None
 
 # Preise pro Token (gemini-2.5-flash, Stand 2025)
 PRICES = {
-    "gemini-1.5-flash": {"input": 0.00001875, "output": 0.000075} 
+    "gemini-2.5-flash": {"input": 0.035 / 1000, "output": 0.07 / 1000}
 }
 
 
@@ -54,7 +54,7 @@ def _init_vertexai():
         credentials=creds
     )
 
-    VERTEX_MODEL = GenerativeModel("gemini-1.5-flash")
+    VERTEX_MODEL = GenerativeModel("gemini-2.5-flash")
     return VERTEX_MODEL
 
 
