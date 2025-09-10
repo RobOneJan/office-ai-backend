@@ -11,7 +11,7 @@ VERTEX_MODEL = None
 
 # Preise pro Token (gemini-2.5-flash, Stand 2025)
 PRICES = {
-    "gemini-2.5-flash": {"input": 0.035 / 1000, "output": 0.07 / 1000}
+    "gemini-2.5-flash": {"input": 0.3 / 1000000, "output": 2.5 / 1000000}
 }
 
 
